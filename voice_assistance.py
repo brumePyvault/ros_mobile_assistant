@@ -147,7 +147,7 @@ Schema:
     "location": "<saved waypoint name if navigating>",
     "waypoint_name": "<name to save current position under>",
     "city": "<city for weather>",
-    "linear_x": "<m/s forward (+) or backward (-) for DRIVE>",
+    "linear_x": "<m/s forward (+) or backward (-) for DRIVE> remember: -0.26 >= x <= 0.26 (use full range mostly both directions)",
     "angular_z": "<rad/s left (+) or right (-) for DRIVE>",
     "duration_s": "<seconds to apply the DRIVE command>"
   },
@@ -155,8 +155,9 @@ Schema:
 }
 Rules:
 - Free phrasing like "I want you at the door" -> NAVIGATE to 'door' if it matches a known waypoint.
-- "turn left/right" -> DRIVE with angular_z positive(left)/negative(right), linear_x 0, duration ≈1–2 s.
-- "move forward/back" -> DRIVE with linear_x positive(forward)/negative(backwards), angular_z 0, duration ≈1–3 s.
+- "turn left/right" -> DRIVE with angular_z positive(left)/negative(right), linear_x=0, duration ≈1–2 s.
+- "move forward/back" -> DRIVE with linear_x positive(forward)/negative(backwards), angular_z=0, duration ≈1–3 s.
+- "moves likes spin and drive like a snake make  up something from this ' "turn left/right" -> DRIVE with angular_z positive(left)/negative(right), linear_x=0, duration ≈ \{make your time\}s. "move forward/back" -> DRIVE with linear_x positive(forward)/negative(backwards), angular_z=0,duration ≈ \{make your time\} s.'"
 - Robot is not holonomic; "move left/right" should be interpreted as a turn, not a strafe.
 - "stop", "cancel", "wait" -> STOP.
 - "come back", "return", "go back" -> COME_BACK.
