@@ -28,7 +28,7 @@ This project is split across two machines:
 ```
 .
 ├── voice_assistance.py     # Core assistant node (Remote PC or SBC; designed for Remote PC)
-├── stt_sr_to_topic.py      # Microphone -> /voice/text publisher (Remote PC)
+├── stt2.py      # Microphone -> /voice/text publisher (Remote PC)
 ├── waypoints.json          # Created on first save; holds named poses
 └── README.md
 ```
@@ -103,7 +103,7 @@ source /opt/ros/humble/setup.bash
 export VOICE_TOPIC=/voice/text
 export LANG=en-GB             # or en-US
 export MIC_INDEX=default      # or a device index
-python3 stt_sr_to_topic.py
+python3 stt2.py
 ```
 
 ### B) Start the assistant
@@ -112,7 +112,7 @@ This consumes `/voice/text`, calls the LLM, then navigates, saves waypoints, dri
 
 ```bash
 source /opt/ros/humble/setup.bash
-python3 voice_assistance.py --waypoints ./waypoints.json --city London
+python3 voice_assistance.py --waypoints ./waypoints.json --city Leicester
 ```
 
 Optional environment variables:
