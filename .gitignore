@@ -1,2 +1,4 @@
 memory.json
 waypoints.json
+old/
+*.env
