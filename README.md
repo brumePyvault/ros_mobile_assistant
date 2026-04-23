@@ -96,7 +96,7 @@ Open two terminals on the **Remote PC**.
 
 ### A) Start speech-to-text publisher
 
-This listens to your microphone and publishes recognised phrases to `/voice/text`.
+This waits for a keypress to start recording from your microphone, then another keypress to stop and publish recognised text to `/voice/text`.
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -104,7 +104,10 @@ export VOICE_TOPIC=/voice/text
 export ELEVENLABS_API_KEY=<your_key>
 export ELEVENLABS_STT_MODEL_ID=scribe_v1
 export VOICE_LANG=en          # e.g. en
+# Optional: keep ALSA warnings quiet on Linux (default true)
+export SUPPRESS_ALSA_ERRORS=true
 python3 stt.py
+# Press any key to start recording, press any key again to stop/transcribe
 ```
 
 ### B) Start the assistant
