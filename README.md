@@ -104,6 +104,8 @@ export VOICE_TOPIC=/voice/text
 export ELEVENLABS_API_KEY=<your_key>
 export ELEVENLABS_STT_MODEL_ID=scribe_v1
 export VOICE_LANG=en          # e.g. en
+# Optional: keep ALSA warnings quiet on Linux (default true)
+export SUPPRESS_ALSA_ERRORS=true
 python3 stt.py
 # Press any key to start recording, press any key again to stop/transcribe
 ```

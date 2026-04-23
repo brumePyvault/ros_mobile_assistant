@@ -6,6 +6,9 @@ import sys
 import termios
 import threading
 import tty
+import contextlib
+import ctypes
+import ctypes.util
 
 import rclpy
 from rclpy.node import Node
@@ -22,6 +25,39 @@ def _env_bool(key: str, default: bool) -> bool:
     if not v:
         return default
     return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _suppress_alsa_errors(enabled: bool = True):
+    """Suppress noisy ALSA stderr warnings while probing/opening microphone devices."""
+    if not enabled:
+        return contextlib.nullcontext()
+
+    lib_name = ctypes.util.find_library("asound")
+    if not lib_name:
+        return contextlib.nullcontext()
+
+    try:
+        asound = ctypes.cdll.LoadLibrary(lib_name)
+    except OSError:
+        return contextlib.nullcontext()
+
+    ERROR_HANDLER_FUNC = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p)
+
+    def py_error_handler(filename, line, function, err, fmt):
+        # Intentionally drop ALSA lib warnings.
+        return None
+
+    c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
+
+    @contextlib.contextmanager
+    def _ctx():
+        try:
+            asound.snd_lib_error_set_handler(c_error_handler)
+            yield
+        finally:
+            asound.snd_lib_error_set_handler(None)
+
+    return _ctx()
 
 
 class ElevenLabsSRPublisher(Node):
@@ -43,6 +79,7 @@ class ElevenLabsSRPublisher(Node):
         self.dynamic_energy = _env_bool("DYNAMIC_ENERGY", True)
         self.energy_threshold = int(os.environ.get("ENERGY_THRESHOLD", "250"))
         self.adjust_for_ambient = _env_bool("ADJUST_FOR_AMBIENT", True)
+        self.suppress_alsa = _env_bool("SUPPRESS_ALSA_ERRORS", True)
 
         # Not currently used by ElevenLabs HTTP STT endpoint, kept for parity/config compatibility.
         self.publish_partials = publish_partials
@@ -51,11 +88,14 @@ class ElevenLabsSRPublisher(Node):
         self.recognizer.dynamic_energy_threshold = self.dynamic_energy
         self.recognizer.energy_threshold = self.energy_threshold
 
-        self.microphone = sr.Microphone()
-        with self.microphone as source:
-            if self.adjust_for_ambient:
-                self.get_logger().info("Calibrating microphone for ambient noise...")
-                self.recognizer.adjust_for_ambient_noise(source, duration=1.0)
+        with _suppress_alsa_errors(self.suppress_alsa):
+            self.microphone = sr.Microphone()
+
+        with _suppress_alsa_errors(self.suppress_alsa):
+            with self.microphone as source:
+                if self.adjust_for_ambient:
+                    self.get_logger().info("Calibrating microphone for ambient noise...")
+                    self.recognizer.adjust_for_ambient_noise(source, duration=1.0)
 
         self._busy = False
         self._stop_event = threading.Event()
@@ -109,21 +149,22 @@ class ElevenLabsSRPublisher(Node):
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     def _record_until_keypress(self) -> sr.AudioData:
-        with self.microphone as source:
-            frames = []
-            stop_recording = threading.Event()
+        with _suppress_alsa_errors(self.suppress_alsa):
+            with self.microphone as source:
+                frames = []
+                stop_recording = threading.Event()
 
-            def wait_for_stop_key():
-                self._read_single_key()
-                stop_recording.set()
+                def wait_for_stop_key():
+                    self._read_single_key()
+                    stop_recording.set()
 
-            stopper = threading.Thread(target=wait_for_stop_key, daemon=True)
-            stopper.start()
+                stopper = threading.Thread(target=wait_for_stop_key, daemon=True)
+                stopper.start()
 
-            while not stop_recording.is_set() and not self._stop_event.is_set():
-                data = source.stream.read(source.CHUNK, exception_on_overflow=False)
-                if data:
-                    frames.append(data)
+                while not stop_recording.is_set() and not self._stop_event.is_set():
+                    data = source.stream.read(source.CHUNK)
+                    if data:
+                        frames.append(data)
 
         audio_bytes = b"".join(frames)
         if not audio_bytes:
