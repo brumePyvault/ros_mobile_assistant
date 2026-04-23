@@ -26,6 +26,8 @@ import threading
 import queue
 import atexit
 from typing import Optional, Dict, Any
+from openai import OpenAI
+
 
 import requests
 
@@ -167,32 +169,19 @@ Rules:
 - Keep 'say' short. Output ONLY the JSON object. No code fences, no commentary.
 """
 
-def call_ollama_chat(prompt: str, url: str, model: str, timeout=25) -> str:
-    """Return assistant text (one non-streaming chat response)."""
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": LLM_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt}
-        ],
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0}
-    }
-    try:
-        resp = requests.post(url.rstrip("/") + "/api/chat", json=payload, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, dict) and "message" in data and "content" in data["message"]:
-            return data["message"]["content"]
-        if "response" in data:
-            return data["response"]
-        if "messages" in data and data["messages"]:
-            return data["messages"][-1].get("content", "")
-    except Exception as e:
-        print("[ollama] error:", e)
-    # Fallback small-talk JSON
-    return json.dumps({"intent": "OTHER", "slots": {}, "say": "I had trouble thinking just now."})
+def call_openai_chat(prompt: str,  model: str, ) -> str:
+    api_key = os.environ.get('OPENAI_API_KEY', '').strip()
+    client = OpenAI(api_key=api_key)
+
+    response = client.responses.create(
+            model=model,
+            instructions=LLM_SYSTEM_PROMPT,
+            input=[
+                {'role': 'user', 'content': f'{prompt}'},
+            ],
+            temperature=0,
+        )
+    return (response.output_text or '').strip()
 
 def extract_first_json(s: str) -> dict:
     """Extract first top-level JSON object from s."""
@@ -229,8 +218,7 @@ def extract_first_json(s: str) -> dict:
 # ===================== Main ROS2 node =====================
 
 class AssistantCoreLLM(Node):
-    def __init__(self, waypoints_path: str, map_frame: str, city: str, speak_here: bool,
-                 llm_url: str, llm_model: str):
+    def __init__(self, waypoints_path: str, map_frame: str, city: str, speak_here: bool, llm_model: str):
         super().__init__('assistant_core_llm')
 
         # config
@@ -240,8 +228,6 @@ class AssistantCoreLLM(Node):
         self.waypoints_path = waypoints_path
         self.waypoints = load_waypoints(waypoints_path)
 
-        # LLM backend
-        self.llm_url = llm_url
         self.llm_model = llm_model
 
         # pubs/subs
@@ -332,7 +318,7 @@ class AssistantCoreLLM(Node):
             "Remember: output ONLY ONE JSON object following the schema."
         )
 
-        raw = call_ollama_chat(prompt, self.llm_url, self.llm_model)
+        raw = call_openai_chat(prompt, self.llm_model)
         self.get_logger().debug("LLM raw: " + (raw or "")[:280].replace("\n", " "))
         data = extract_first_json(raw)
 
@@ -516,8 +502,7 @@ def main():
     parser.add_argument("--map-frame", default="map")
     parser.add_argument("--city", default=os.environ.get("CITY", "Leicester"))
     parser.add_argument("--speak-local", default="true", choices=["true", "false"])
-    parser.add_argument("--llm-url", default=os.environ.get("LLM_URL", "http://127.0.0.1:11434"))
-    parser.add_argument("--llm-model", default=os.environ.get("LLM_MODEL", "llama3.1:8b"))
+    parser.add_argument("--llm-model", default=os.environ.get("LLM_MODEL", "gpt-4.1-mini"))
     args = parser.parse_args()
 
     rclpy.init()
@@ -526,7 +511,6 @@ def main():
         map_frame=args.map_frame,
         city=args.city,
         speak_here=(args.speak_local.lower() == "true"),
-        llm_url=args.llm_url,
         llm_model=args.llm_model,
     )
     try:
