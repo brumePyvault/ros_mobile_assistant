@@ -16,7 +16,7 @@ This project is split across two machines:
 * Voice commands to navigate to saved waypoints, save new waypoints, come back, stop, ask weather, or drive manually.
 * Uses Ollama locally for intent parsing into a simple JSON schema.
 * Speech recognition to publish recognised phrases as `/voice/text`.
-* Optional local TTS on the Remote PC with `pyttsx3` or ElevenLabs TTS.
+* Optional ElevenLabs TTS on the Remote PC for spoken replies.
 * Safe manual driving with rate-controlled `/cmd_vel` and configurable caps.
 * Waypoint persistence to a JSON file.
 * Works alongside Nav2 on your existing map.
@@ -52,7 +52,7 @@ This project is split across two machines:
 **Remote PC**
 
 * Python 3.10
-* `pip install requests pyttsx3 speechrecognition`
+* `pip install requests speechrecognition`
 * **Ollama** running locally with a model pulled, e.g. `llama3.1:8b`
 
 ---
@@ -85,7 +85,7 @@ ollama serve
 ollama pull llama3.1:8b
 
 # Python deps
-python3 -m pip install --user requests pyttsx3 SpeechRecognition python-dotenv
+python3 -m pip install --user requests SpeechRecognition python-dotenv
 ```
 
 ---
@@ -129,7 +129,6 @@ Optional environment variables:
 * `ELEVENLABS_TTS_VOICE_ID=<voice_id>` voice used for ElevenLabs TTS
 * `ELEVENLABS_TTS_MODEL_ID=eleven_flash_v2_5` (optional)
 * `ELEVENLABS_TTS_OUTPUT_FORMAT=mp3_44100_128` (optional)
-* `TTS_BACKEND=elevenlabs` alternative switch to force ElevenLabs backend
 
 ---
 

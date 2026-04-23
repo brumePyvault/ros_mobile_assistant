@@ -2,7 +2,7 @@
 # voice_assistance.py
 #
 # Remote PC: subscribes to /voice/text -> asks local LLM (Ollama) for intent JSON -> acts (Nav2 / save waypoint / weather / drive)
-# Deps: pip install requests pyttsx3
+# Deps: pip install requests
 # Start Ollama separately (default http://127.0.0.1:11434), e.g.:
 #   ollama serve
 #   ollama pull llama3.1:8b
@@ -46,14 +46,8 @@ from tf2_ros import Buffer, TransformListener
 
 # ===================== TTS (robust, background thread) =====================
 
-try:
-    import pyttsx3
-except Exception:
-    pyttsx3 = None
-
 _tts_q: "queue.Queue[Optional[str]]" = queue.Queue()
 _tts_thread_started = False
-_tts_engine = None
 
 
 def _env_bool(key: str, default: bool) -> bool:
@@ -119,50 +113,23 @@ def _speak_elevenlabs(text: str) -> bool:
         return False
 
 def _tts_worker():
-    global _tts_engine
-    use_elevenlabs = _env_bool("ELEVENLABS_TTS_ENABLED", False)
-    backend = os.environ.get("TTS_BACKEND", "").strip().lower()
-    if backend == "elevenlabs":
-        use_elevenlabs = True
+    use_elevenlabs = _env_bool("ELEVENLABS_TTS_ENABLED", True)
+    if not use_elevenlabs:
+        return
 
-    if use_elevenlabs:
-        if pyttsx3 is not None:
-            try:
-                _tts_engine = pyttsx3.init()
-            except Exception:
-                _tts_engine = None
-    else:
-        if pyttsx3 is None:
-            return
-        _tts_engine = pyttsx3.init()
-
-    try:
-        while True:
-            item = _tts_q.get()
-            if item is None:
-                break
-            text = (item or "").strip()
-            if not text:
-                continue
-            if use_elevenlabs:
-                ok = _speak_elevenlabs(text)
-                if not ok and _tts_engine is not None:
-                    _tts_engine.say(text)
-                    _tts_engine.runAndWait()
-            else:
-                _tts_engine.say(text)
-                _tts_engine.runAndWait()
-    finally:
-        try:
-            if _tts_engine is not None:
-                _tts_engine.stop()
-        except Exception:
-            pass
+    while True:
+        item = _tts_q.get()
+        if item is None:
+            break
+        text = (item or "").strip()
+        if not text:
+            continue
+        _speak_elevenlabs(text)
 
 def _ensure_tts_thread():
     global _tts_thread_started
-    use_elevenlabs = _env_bool("ELEVENLABS_TTS_ENABLED", False) or os.environ.get("TTS_BACKEND", "").strip().lower() == "elevenlabs"
-    if pyttsx3 is None and not use_elevenlabs:
+    use_elevenlabs = _env_bool("ELEVENLABS_TTS_ENABLED", True)
+    if not use_elevenlabs:
         return
     if not _tts_thread_started:
         t = threading.Thread(target=_tts_worker, daemon=True)
