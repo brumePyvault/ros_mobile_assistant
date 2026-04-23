@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
+import io
 import os
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 from dotenv import load_dotenv
+import requests
+import speech_recognition as sr
+
 load_dotenv()  # take environment variables from .env.
 
-
-import azure.cognitiveservices.speech as speechsdk
 
 def _env_bool(key: str, default: bool) -> bool:
     v = os.environ.get(key, "")
@@ -16,60 +19,46 @@ def _env_bool(key: str, default: bool) -> bool:
         return default
     return v.strip().lower() in ("1", "true", "yes", "on")
 
-class AzureSRPublisher(Node):
-    def __init__(self,
-                 topic: str = "/voice/text",
-                 language: str = "en-GB",
-                 device_name: str | None = None,
-                 publish_partials: bool = True):
-        super().__init__("azure_sr_to_topic")
+
+class ElevenLabsSRPublisher(Node):
+    def __init__(
+        self,
+        topic: str = "/voice/text",
+        language: str = "en",
+        publish_partials: bool = False,
+    ):
+        super().__init__("elevenlabs_sr_to_topic")
         self.pub = self.create_publisher(String, topic, 10)
 
-        # --- Azure config ---
-        key = os.environ.get("AZURE_SPEECH_KEY", "").strip()
-        region = os.environ.get("AZURE_SPEECH_REGION", "").strip()
-        if not key or not region:
-            raise RuntimeError("Missing AZURE_SPEECH_KEY or AZURE_SPEECH_REGION in environment.")
+        self.api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+        if not self.api_key:
+            raise RuntimeError("Missing ELEVENLABS_API_KEY in environment.")
 
-        speech_config = speechsdk.SpeechConfig(subscription=key, region=region)
-        speech_config.set_property(
-    speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, "2500"
-)
-        speech_config.speech_recognition_language = language
-        # Optional: better punctuation/formatting
-        speech_config.set_property(
-            speechsdk.PropertyId.SpeechServiceResponse_PostProcessingOption, "TrueText"
-        )
+        self.model_id = os.environ.get("ELEVENLABS_STT_MODEL_ID", "scribe_v1").strip() or "scribe_v1"
+        self.language = language
+        self.voice_activity_timeout = float(os.environ.get("VOICE_ACTIVITY_TIMEOUT", "5"))
+        self.dynamic_energy = _env_bool("DYNAMIC_ENERGY", True)
+        self.energy_threshold = int(os.environ.get("ENERGY_THRESHOLD", "250"))
+        self.adjust_for_ambient = _env_bool("ADJUST_FOR_AMBIENT", True)
 
-        if device_name and device_name.lower() != "default":
-            audio_config = speechsdk.audio.AudioConfig(device_name=device_name)
-        else:
-            audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
-
-        self.recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config,
-            audio_config=audio_config
-        )
-
+        # Not currently used by ElevenLabs HTTP STT endpoint, kept for parity/config compatibility.
         self.publish_partials = publish_partials
 
-        self.get_logger().info(f"Azure Speech: region={region} | lang={language}")
-        self.get_logger().info(f"Mic device: {device_name if device_name else 'default'}")
+        self.recognizer = sr.Recognizer()
+        self.recognizer.dynamic_energy_threshold = self.dynamic_energy
+        self.recognizer.energy_threshold = self.energy_threshold
+
+        self.microphone = sr.Microphone()
+        with self.microphone as source:
+            if self.adjust_for_ambient:
+                self.get_logger().info("Calibrating microphone for ambient noise...")
+                self.recognizer.adjust_for_ambient_noise(source, duration=1.0)
+
+        self.timer = self.create_timer(0.1, self._loop_once)
+        self._busy = False
+
+        self.get_logger().info(f"ElevenLabs STT model={self.model_id} | lang={self.language}")
         self.get_logger().info(f"Publishing recognised text to: {topic}")
-
-        # --- Wire up events ---
-        # Final results
-        self.recognizer.recognized.connect(self._on_recognized)
-        # Intermediate hypotheses
-        if self.publish_partials:
-            self.recognizer.recognizing.connect(self._on_recognizing)
-        # Errors / cancellations
-        self.recognizer.canceled.connect(self._on_canceled)
-        self.recognizer.session_started.connect(lambda evt: self.get_logger().info("Session started."))
-        self.recognizer.session_stopped.connect(lambda evt: self.get_logger().info("Session stopped."))
-
-        # Start continuous recognition (non-blocking)
-        self.recognizer.start_continuous_recognition_async()
         self.get_logger().info("Listening… speak a phrase and pause.")
 
     def _publish(self, text: str, tag: str = ""):
@@ -81,54 +70,68 @@ class AzureSRPublisher(Node):
         self.pub.publish(msg)
         self.get_logger().info(f"→ {msg.data}")
 
-    def _on_recognizing(self, evt: speechsdk.SessionEventArgs):
-        # evt.result.text contains partial transcription
+    def _transcribe_with_elevenlabs(self, wav_bytes: bytes) -> str:
+        files = {
+            "file": ("speech.wav", io.BytesIO(wav_bytes), "audio/wav"),
+        }
+        data = {
+            "model_id": self.model_id,
+            "language_code": self.language,
+        }
+        headers = {"xi-api-key": self.api_key}
+
+        r = requests.post(
+            "https://api.elevenlabs.io/v1/speech-to-text",
+            headers=headers,
+            files=files,
+            data=data,
+            timeout=30,
+        )
+        r.raise_for_status()
+        payload = r.json()
+        return (payload.get("text") or "").strip()
+
+    def _loop_once(self):
+        if self._busy:
+            return
+        self._busy = True
         try:
-            # self._publish(evt.result.text, tag="partial")
+            with self.microphone as source:
+                audio = self.recognizer.listen(
+                    source,
+                    timeout=None,
+                    phrase_time_limit=self.voice_activity_timeout,
+                )
+            wav_bytes = audio.get_wav_data(convert_rate=16000, convert_width=2)
+            text = self._transcribe_with_elevenlabs(wav_bytes)
+            if text:
+                self._publish(text)
+        except sr.WaitTimeoutError:
             pass
+        except requests.HTTPError as e:
+            self.get_logger().error(f"ElevenLabs STT HTTP error: {e}")
         except Exception as e:
-            self.get_logger().error(f"Recognizing handler error: {e}")
+            self.get_logger().error(f"Recognition loop error: {e}")
+        finally:
+            self._busy = False
 
-    def _on_recognized(self, evt: speechsdk.SessionEventArgs):
-        try:
-            result = evt.result
-            if result.reason == speechsdk.ResultReason.RecognizedSpeech:
-                self._publish(result.text)
-            elif result.reason == speechsdk.ResultReason.NoMatch:
-                # No audible speech or could not match
-                pass
-        except Exception as e:
-            self.get_logger().error(f"Recognized handler error: {e}")
-
-    def _on_canceled(self, evt: speechsdk.SessionEventArgs):
-        details = evt.result.cancellation_details
-        self.get_logger().error(f"Recognition canceled: reason={details.reason} | error={details.error_details}")
-
-    def shutdown(self):
-        try:
-            self.recognizer.stop_continuous_recognition_async().get()
-        except Exception:
-            pass
 
 def main():
     rclpy.init()
     topic = os.environ.get("VOICE_TOPIC", "/voice/text")
-    lang = "en-GB"
-    mic_name = os.environ.get("MIC_DEVICE_NAME", "").strip()
-    partials = _env_bool("PARTIALS", True)
+    lang = os.environ.get("VOICE_LANG", "en")
+    partials = _env_bool("PARTIALS", False)
 
-    node = AzureSRPublisher(topic=topic, language=lang,
-                            device_name=mic_name if mic_name else None,
-                            publish_partials=partials)
+    node = ElevenLabsSRPublisher(topic=topic, language=lang, publish_partials=partials)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.shutdown()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()

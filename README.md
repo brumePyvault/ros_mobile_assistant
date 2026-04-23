@@ -28,7 +28,7 @@ This project is split across two machines:
 ```
 .
 ├── voice_assistance.py     # Core assistant node (Remote PC or SBC; designed for Remote PC)
-├── stt2.py      # Microphone -> /voice/text publisher (Remote PC)
+├── stt.py      # ElevenLabs STT -> /voice/text publisher (Remote PC)
 ├── waypoints.json          # Created on first save; holds named poses
 └── README.md
 ```
@@ -85,7 +85,7 @@ ollama serve
 ollama pull llama3.1:8b
 
 # Python deps
-python3 -m pip install --user requests pyttsx3 SpeechRecognition
+python3 -m pip install --user requests pyttsx3 SpeechRecognition python-dotenv
 ```
 
 ---
@@ -101,9 +101,10 @@ This listens to your microphone and publishes recognised phrases to `/voice/text
 ```bash
 source /opt/ros/humble/setup.bash
 export VOICE_TOPIC=/voice/text
-export LANG=en-GB             # or en-US
-export MIC_INDEX=default      # or a device index
-python3 stt2.py
+export ELEVENLABS_API_KEY=<your_key>
+export ELEVENLABS_STT_MODEL_ID=scribe_v1
+export VOICE_LANG=en          # e.g. en
+python3 stt.py
 ```
 
 ### B) Start the assistant
@@ -142,7 +143,7 @@ Optional environment variables:
 
 **Subscribed**
 
-* `/voice/text` (`std_msgs/String`) from `stt_sr_to_topic.py`
+* `/voice/text` (`std_msgs/String`) from `stt.py`
 * `/amcl_pose` (`geometry_msgs/PoseWithCovarianceStamped`) for pose memory
 
 **Published**
@@ -216,7 +217,7 @@ Waffle Pi is factory limited to about **0.26 m/s**. You can lift Nav2 and teleop
 
 **Speech recognition does not hear you**
 
-* Change `MIC_INDEX`, calibrate ambient noise, and ensure `LANG` matches your accent. The script logs errors from Google Web Speech if unavailable.
+* Change `MIC_INDEX`, calibrate ambient noise, and ensure `LANG` matches your accent. The script logs errors from ElevenLabs STT API if unavailable.
 
 ---
 
