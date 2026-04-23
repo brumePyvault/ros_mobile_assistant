@@ -16,7 +16,7 @@ This project is split across two machines:
 * Voice commands to navigate to saved waypoints, save new waypoints, come back, stop, ask weather, or drive manually.
 * Uses Ollama locally for intent parsing into a simple JSON schema.
 * Speech recognition to publish recognised phrases as `/voice/text`.
-* Optional local TTS on the Remote PC with `pyttsx3`.
+* Optional local TTS on the Remote PC with `pyttsx3` or ElevenLabs TTS.
 * Safe manual driving with rate-controlled `/cmd_vel` and configurable caps.
 * Waypoint persistence to a JSON file.
 * Works alongside Nav2 on your existing map.
@@ -125,6 +125,11 @@ Optional environment variables:
 * `LLM_MODEL` (default `llama3.1:8b`)
 * `CITY` default fallback for weather
 * `--speak-local true|false` to enable laptop TTS
+* `ELEVENLABS_TTS_ENABLED=true` to enable ElevenLabs for spoken replies
+* `ELEVENLABS_TTS_VOICE_ID=<voice_id>` voice used for ElevenLabs TTS
+* `ELEVENLABS_TTS_MODEL_ID=eleven_flash_v2_5` (optional)
+* `ELEVENLABS_TTS_OUTPUT_FORMAT=mp3_44100_128` (optional)
+* `TTS_BACKEND=elevenlabs` alternative switch to force ElevenLabs backend
 
 ---
 

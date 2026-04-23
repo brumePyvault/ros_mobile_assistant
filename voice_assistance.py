@@ -25,6 +25,8 @@ import argparse
 import threading
 import queue
 import atexit
+import tempfile
+import subprocess
 from typing import Optional, Dict, Any
 from openai import OpenAI
 
@@ -53,11 +55,87 @@ _tts_q: "queue.Queue[Optional[str]]" = queue.Queue()
 _tts_thread_started = False
 _tts_engine = None
 
+
+def _env_bool(key: str, default: bool) -> bool:
+    v = os.environ.get(key, "")
+    if not v:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _play_audio_file(path: str):
+    players = (
+        ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+        ["mpg123", "-q", path],
+        ["aplay", path],
+    )
+    for cmd in players:
+        try:
+            subprocess.run(cmd, check=True)
+            return
+        except Exception:
+            continue
+
+
+def _speak_elevenlabs(text: str) -> bool:
+    api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    if not api_key:
+        return False
+
+    voice_id = os.environ.get("ELEVENLABS_TTS_VOICE_ID", "").strip()
+    if not voice_id:
+        return False
+
+    model_id = os.environ.get("ELEVENLABS_TTS_MODEL_ID", "eleven_flash_v2_5").strip() or "eleven_flash_v2_5"
+    fmt = os.environ.get("ELEVENLABS_TTS_OUTPUT_FORMAT", "mp3_44100_128").strip() or "mp3_44100_128"
+
+    try:
+        r = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={
+                "xi-api-key": api_key,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg",
+            },
+            json={
+                "text": text,
+                "model_id": model_id,
+                "output_format": fmt,
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+    except Exception:
+        return False
+
+    suffix = ".mp3" if "mp3" in fmt else ".wav"
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as f:
+            f.write(r.content)
+            f.flush()
+            _play_audio_file(f.name)
+        return True
+    except Exception:
+        return False
+
 def _tts_worker():
     global _tts_engine
-    if pyttsx3 is None:
-        return
-    _tts_engine = pyttsx3.init()
+    use_elevenlabs = _env_bool("ELEVENLABS_TTS_ENABLED", False)
+    backend = os.environ.get("TTS_BACKEND", "").strip().lower()
+    if backend == "elevenlabs":
+        use_elevenlabs = True
+
+    if use_elevenlabs:
+        if pyttsx3 is not None:
+            try:
+                _tts_engine = pyttsx3.init()
+            except Exception:
+                _tts_engine = None
+    else:
+        if pyttsx3 is None:
+            return
+        _tts_engine = pyttsx3.init()
+
     try:
         while True:
             item = _tts_q.get()
@@ -66,17 +144,25 @@ def _tts_worker():
             text = (item or "").strip()
             if not text:
                 continue
-            _tts_engine.say(text)
-            _tts_engine.runAndWait()
+            if use_elevenlabs:
+                ok = _speak_elevenlabs(text)
+                if not ok and _tts_engine is not None:
+                    _tts_engine.say(text)
+                    _tts_engine.runAndWait()
+            else:
+                _tts_engine.say(text)
+                _tts_engine.runAndWait()
     finally:
         try:
-            _tts_engine.stop()
+            if _tts_engine is not None:
+                _tts_engine.stop()
         except Exception:
             pass
 
 def _ensure_tts_thread():
     global _tts_thread_started
-    if pyttsx3 is None:
+    use_elevenlabs = _env_bool("ELEVENLABS_TTS_ENABLED", False) or os.environ.get("TTS_BACKEND", "").strip().lower() == "elevenlabs"
+    if pyttsx3 is None and not use_elevenlabs:
         return
     if not _tts_thread_started:
         t = threading.Thread(target=_tts_worker, daemon=True)
